@@ -6,11 +6,6 @@ let logger = require('morgan');
 let path = require('path');
 let ExcelJS = require('exceljs');
 
-let validateEmail = require('./lib/email/validate.js');
-let { generateRRR, 
-     initiatePayment } = require('./lib/remita/remita.js');
-
-
 //=========================================================
 let products;
 async function getProductsCSV(path) {
@@ -30,16 +25,17 @@ async function getProductsCSV(path) {
     return items;
 }
 (async ( ) => {
-    products = await getProductsCSV("./public/data/products.csv");
+    products = await getProductsCSV('./public/data/products.csv');
 })( );
 
 let idx = 0;
 
 //=======================================================
 
-let Cart = require("./models/cart.js");
+let Cart = require('./models/cart.js');
 
-var app = express();
+let app = express();
+let sessionRoute = require('./routes/session.js');
 
 // view engine setup
 app.set('views', path.join(__dirname, 'views'));
@@ -59,57 +55,25 @@ app.use(session({
    name: 'iwxcollections-cookie'
 }));
 
-app.use('*', (req, res, next) => { 
-  if(!req.session.cart) { //TODO
-     req.session.user = { };
-     req.session.user.orders = [];
-     req.session.cart = new Cart( );
-     console.log(`\nNew Client connected.\nID: ${req.sessionID}\n`);
-  }
-  next( );
-})
+/*
+ * ROUTES ---
+ */
 
-app.get('/', (req, res) => {
-  res.render("index.ejs");
+app.use('*', sessionRoute);
+require('./routes/index.js')(app); /* /, /home */
+require('./routes/login.js')(app); /* /login /account */
+require('./routes/cart.js')(app);  /* /cart */
+require('./routes/checkout.js')(app); /* /checkout */
+require('./routes/order.js')(app); /* POST: /oreder */
+require('./routes/webhook.js')(app); /* /webhook */
+
+app.get('/shop', (req, res) => {
+  res.render('shop.ejs', { products: products });
 });
-app.get("/home", (req, res) => {
-  res.render("index.ejs");
-});
-app.get("/shop", (req, res) => {
-  res.render("shop.ejs", { products: products });
-});
-app.get("/products/:idx", (req, res) => {
+app.get('/products/:idx', (req, res) => {
   res.send(products.slice(req.params.idx));
 });
-
-app.get("/login", (req, res) => {
-  let user = req.session.user; //TODO
-  if(user.email) {
-     res.redirect("/account");
-     return;
-  }
-  res.render("login.ejs");
-});
-
-app.get("/account", (req, res) => {
-  let user = req.session.user, //TODO
-      orders = req.session.user.orders;
-  res.render("account.ejs", {
-     email: user.email,
-     orders: orders
-  });
-});
-
-app.get("/cart", (req, res) => {
-  let cart = req.session.cart; //TODO
-  res.render("cart.ejs", { 
-	cart: cart.items,
-	product: null,
-	quantityValue: null
-  });
-});
-
-app.get("/cart/:id", (req, res) => {
+app.get('/cart/:id', (req, res) => {
 
   let cart = req.session.cart, //TODO
       id = req.params.id, 
@@ -120,58 +84,15 @@ app.get("/cart/:id", (req, res) => {
      Cart.remove(cart, id); //remove from cart
   }
 
-  res.render("cart.ejs", {
+  res.render('cart.ejs', {
      cart: cart.items,
      product: products[id - 1],
      quantityValue: quantityValue
   });
 });
 
-app.get("/checkout", (req, res) => {
-  let user = req.session.user, //TODO
-      cart = req.session.cart, //TODO
-      subtotal = cart.amount, //total amount of items
-      shipping_fee = 1000;
 
-  if(!user.email) { //user is not logged in
-     res.redirect("/login");
-     return;
-  }
-
-  subtotal += ((10/100) * cart.amount); //10% commission
-  user.amount = subtotal + shipping_fee;
-
-  res.render("checkout.ejs", {
-    subtotal: subtotal.toLocaleString( ),
-    shipping_fee: shipping_fee.toLocaleString( ),
-    gross_total: (subtotal+shipping_fee).toLocaleString( )
-  });
-});
-
-app.get("/webhook", (req, res) => {
-  let cart = req.session.cart,
-      orders = req.session.user.orders;
-
-  console.log(`\nReferer: ${req.headers['referer']}`);
-  console.log(req.session);
-
-  orders.forEach(order => { //check for duplicate order
-    if(order.id == req.query.orderID) {
-       res.redirect("/login");
-       return;
-    }
-  });
-  orders.push({
-     id: req.query.orderID,
-     rrr: req.query.RRR, 
-     date: new Date( ).toString( ).slice(0, 33)
-  });
-  //send cart and orders to db for management
-  Cart.clear(cart); //empty cart
-  res.redirect("/account"); 
-});
-
-app.post("/cart", (req, res) => {
+app.post('/cart', (req, res) => {
   let cart = req.session.cart, //TODO
       id = req.body.id,
       quantity = req.body.quantity,
@@ -181,59 +102,6 @@ app.post("/cart", (req, res) => {
   let status = Cart.append(cart, product);
   res.end(String(status)); //return status
 });
-
-app.post("/order", async (req, res) => {
-  let user = req.session.user; //TODO
-  Object.assign(user, req.body);
-
-  let response = await generateRRR(user);
-  switch(response.statuscode) {
-    case "025": {
-      user.RRR = response.RRR;
-      response = await initiatePayment(user); 
-    } break;
-    default: {
-      console.log(response);
-    }
-  }
-  res.send(response);
-});
-app.post("/login", (req, res) => {
-  //validate email
-  if(!validateEmail(req.body.email)) {
-     res.redirect("/login");
-     return;
-  }
-  let user = req.session.user;
-  //verify existence and authentify password
-  Object.assign(user, req.body);
-  res.redirect('/'); //TODO
-});
-
-app.post("/signup", (req, res) => {
-  //validate email
-  if(!validateEmail(req.body.email)) {
-     res.redirect("/login");
-     return;
-  }
-  //verify email uniqueness
-  if(req.body.pswd !== req.body.cpswd) {
-     res.redirect("/login");
-     return;
-  }
-  //add user to db
-  let user = req.session.user; //TODO
-	
-  Object.assign(user, req.body);
-  res.redirect('/'); //TODO
-});
-
-app.delete("/cart/:id", (req, res) => {
-  let cart = req.session.cart;
-  Cart.remove(cart, req.params.id)
-  res.json({status: "deleted"});//TODO
-});
-
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
