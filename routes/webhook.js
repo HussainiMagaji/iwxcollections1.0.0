@@ -6,16 +6,12 @@ module.exports = function(app) {
 
     let cart = req.session.cart,
     orders = req.session.user.orders;
-      
-    console.log(`\nReferer: ${req.headers['referer']}`);
-    console.log(req.session);
 
     orders.forEach(order => { //check for duplicate order
       if(order.id == req.query.orderID) {
         res.redirect('/login');
-        return;                                        
+        return;
       }
-
     });
 
     orders.push({
@@ -25,7 +21,7 @@ module.exports = function(app) {
     });                                           
 
     //send cart and orders to db for management
-    Cart.clear(cart); //empty cart
+    Cart.clear(cart); //empty cart 
     res.redirect('/account');
 
   });

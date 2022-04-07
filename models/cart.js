@@ -34,7 +34,9 @@ class Cart {
   }
 
   static clear(cart) { 
-    cart.items = [ ]; 
+    cart.items = [ ],
+    cart.length = 0,
+    cart.amount = 0;
   }
 
 }
